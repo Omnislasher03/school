@@ -12,6 +12,7 @@ type CatalogProps = {
 };
 
 type Locale = "en" | "id";
+type Country = "MY" | "US";
 
 const projectId = import.meta.env.VITE_XSOLLA_PROJECT_ID;
 const apiBase = "https://store.xsolla.com/api/v2/project";
@@ -25,6 +26,7 @@ function flattenGroups(groups: Group[]): Group[] {
 
 export default function Catalog({ isLoggedIn }: CatalogProps) {
   const { addToCart } = useCart();
+  const [country, setCountry] = useState<Country>("MY");
   const [groups, setGroups] = useState<Group[]>([]);
   const [selectedGroup, setSelectedGroup] = useState("");
   const [items, setItems] = useState<CartItem[]>([]);
@@ -75,6 +77,7 @@ export default function Catalog({ isLoggedIn }: CatalogProps) {
           limit: "50",
           offset: "0",
           locale,
+          country,
         });
         const response = await fetch(
           `${apiBase}/${projectId}/items/virtual_items/group/${encodeURIComponent(selectedGroup)}?${query}`,
@@ -94,7 +97,7 @@ export default function Catalog({ isLoggedIn }: CatalogProps) {
       }
     }
     void loadItems();
-  }, [selectedGroup, locale]);
+  }, [selectedGroup, locale, country]);
 
   return (
     <section className="catalog">
@@ -121,6 +124,26 @@ export default function Catalog({ isLoggedIn }: CatalogProps) {
               >
                 <option value="en">English</option>
                 <option value="id">Bahasa Indonesia</option>
+              </select>
+              <svg
+                className="language-chevron"
+                viewBox="0 0 20 20"
+                aria-hidden="true"
+              >
+                <path d="m5 7.5 5 5 5-5" />
+              </svg>
+            </span>
+            <span className="language-label">Pricing region</span>
+            <span className="language-select-wrap">
+              <select
+                className="language-select"
+                value={country}
+                onChange={(event) =>
+                  setCountry(event.target.value === "US" ? "US" : "MY")
+                }
+              >
+                <option value="MY">Malaysia</option>
+                <option value="US">United States</option>
               </select>
               <svg
                 className="language-chevron"
