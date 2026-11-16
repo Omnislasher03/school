@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useCallback,
   useState,
   type ReactNode,
 } from "react";
@@ -30,6 +31,7 @@ export type CartLine = {
 type CartContextValue = {
   items: CartLine[];
   addToCart: (item: CartItem) => void;
+  updateCartItems: (catalogItems: CartItem[]) => void;
   removeFromCart: (sku: string) => void;
   changeQuantity: (sku: string, quantity: number) => void;
 };
@@ -37,7 +39,22 @@ type CartContextValue = {
 const CartContext = createContext<CartContextValue | undefined>(undefined);
 
 export function CartProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<CartLine[]>([]);
+  const CART_STORAGE_KEY = "xsolla_cart";
+
+  const [items, setItems] = useState<CartLine[]>(() => {
+    const saved = localStorage.getItem(CART_STORAGE_KEY);
+    if (!saved) return [];
+
+    try {
+      return JSON.parse(saved) as CartLine[];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items));
+  }, [items]);
 
   function addToCart(item: CartItem) {
     setItems((current) => {
@@ -55,6 +72,19 @@ export function CartProvider({ children }: { children: ReactNode }) {
     });
   }
 
+  const updateCartItems = useCallback((catalogItems: CartItem[]) => {
+    const latestItemsBySku = new Map(
+      catalogItems.map((item) => [item.sku, item]),
+    );
+
+    setItems((current) =>
+      current.map((line) => {
+        const latestItem = latestItemsBySku.get(line.item.sku);
+        return latestItem ? { ...line, item: latestItem } : line;
+      }),
+    );
+  }, []);
+
   function removeFromCart(sku: string) {
     setItems((current) => current.filter((line) => line.item.sku !== sku));
   }
@@ -71,7 +101,13 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   return (
     <CartContext.Provider
-      value={{ items, addToCart, removeFromCart, changeQuantity }}
+      value={{
+        items,
+        addToCart,
+        updateCartItems,
+        removeFromCart,
+        changeQuantity,
+      }}
     >
       {children}
     </CartContext.Provider>

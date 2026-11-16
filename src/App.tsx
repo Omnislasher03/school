@@ -5,6 +5,7 @@ import Catalog from "./components/catalog";
 import Cart from "./components/cart";
 
 function App() {
+  const [country, setCountry] = useState<"MY" | "US">("MY");
   const [isLoggedIn, setIsLoggedIn] = useState(() =>
     Boolean(sessionStorage.getItem("xsolla_token")),
   );
@@ -18,7 +19,11 @@ function App() {
         </div>
       </header>
       <main className="app-main">
-        <Catalog isLoggedIn={isLoggedIn} />
+        <Catalog
+          isLoggedIn={isLoggedIn}
+          country={country}
+          onCountryChange={setCountry}
+        />
       </main>
     </div>
   );

@@ -9,6 +9,8 @@ type Group = {
 
 type CatalogProps = {
   isLoggedIn: boolean;
+  country: Country;
+  onCountryChange: (country: Country) => void;
 };
 
 type Locale = "en" | "id";
@@ -24,12 +26,18 @@ function flattenGroups(groups: Group[]): Group[] {
   ]);
 }
 
-export default function Catalog({ isLoggedIn }: CatalogProps) {
-  const { addToCart } = useCart();
-  const [country, setCountry] = useState<Country>("MY");
+export default function Catalog({
+  isLoggedIn,
+  country,
+  onCountryChange,
+}: CatalogProps) {
+  const { addToCart, updateCartItems } = useCart();
   const [groups, setGroups] = useState<Group[]>([]);
   const [selectedGroup, setSelectedGroup] = useState("");
   const [items, setItems] = useState<CartItem[]>([]);
+  const [itemsByGroup, setItemsByGroup] = useState<Record<string, CartItem[]>>(
+    {},
+  );
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [locale, setLocale] = useState<Locale>(() =>
@@ -66,7 +74,8 @@ export default function Catalog({ isLoggedIn }: CatalogProps) {
   }, [locale]);
 
   useEffect(() => {
-    if (!projectId || !selectedGroup) return;
+    if (!projectId || groups.length === 0) return;
+    let active = true;
 
     async function loadItems() {
       setLoading(true);
@@ -79,25 +88,49 @@ export default function Catalog({ isLoggedIn }: CatalogProps) {
           locale,
           country,
         });
-        const response = await fetch(
-          `${apiBase}/${projectId}/items/virtual_items/group/${encodeURIComponent(selectedGroup)}?${query}`,
-        );
-        if (!response.ok) {
-          throw new Error(`Could not load items (${response.status}).`);
-        }
+        const groupResults = await Promise.all(
+          groups.map(async (group) => {
+            const response = await fetch(
+              `${apiBase}/${projectId}/items/virtual_items/group/${encodeURIComponent(group.external_id)}?${query}`,
+            );
+            if (!response.ok) {
+              throw new Error(
+                `Could not load items for ${group.name} (${response.status}).`,
+              );
+            }
 
-        const data: { items: CartItem[] } = await response.json();
-        setItems(data.items);
-      } catch (error) {
-        setError(
-          error instanceof Error ? error.message : "Could not load items",
+            const data: { items: CartItem[] } = await response.json();
+            return { groupId: group.external_id, items: data.items };
+          }),
         );
+        if (!active) return;
+
+        setItemsByGroup(
+          Object.fromEntries(
+            groupResults.map((result) => [result.groupId, result.items]),
+          ),
+        );
+        updateCartItems(groupResults.flatMap((result) => result.items));
+      } catch (error) {
+        if (active) {
+          setError(
+            error instanceof Error ? error.message : "Could not load items",
+          );
+        }
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     }
     void loadItems();
-  }, [selectedGroup, locale, country]);
+
+    return () => {
+      active = false;
+    };
+  }, [groups, locale, country, updateCartItems]);
+
+  useEffect(() => {
+    setItems(itemsByGroup[selectedGroup] ?? []);
+  }, [itemsByGroup, selectedGroup]);
 
   return (
     <section className="catalog">
@@ -139,7 +172,7 @@ export default function Catalog({ isLoggedIn }: CatalogProps) {
                 className="language-select"
                 value={country}
                 onChange={(event) =>
-                  setCountry(event.target.value === "US" ? "US" : "MY")
+                  onCountryChange(event.target.value === "US" ? "US" : "MY")
                 }
               >
                 <option value="MY">Malaysia</option>
