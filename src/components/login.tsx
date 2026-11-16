@@ -3,12 +3,17 @@ import { Widget } from "@xsolla/login-sdk";
 
 const token_key = "xsolla_token";
 
-export default function Login() {
+type LoginProps = {
+  onAuthChange: (loggedIn: boolean) => void;
+};
+
+export default function Login({ onAuthChange }: LoginProps) {
   const widgetRef = useRef<Widget | null>(null);
   const [token, setToken] = useState(() => sessionStorage.getItem(token_key));
   const [error, setError] = useState("");
 
   useEffect(() => {
+    onAuthChange(Boolean(token));
     const params = new URLSearchParams(window.location.search);
     const returnedToken = params.get("token");
 
@@ -26,7 +31,7 @@ export default function Login() {
       window.location.hash;
 
     window.history.replaceState({}, "", cleanUrl);
-  }, []);
+  }, [token, onAuthChange]);
 
   const handleLogin = () => {
     const projectId = import.meta.env.VITE_XSOLLA_LOGIN_PROJECT_ID;
