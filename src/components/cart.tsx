@@ -15,6 +15,13 @@ export type CartItem = {
   description?: string;
   image_url?: string | null;
   is_free?: boolean;
+  can_be_bought?: boolean;
+  limits?: {
+    per_user?: {
+      total?: number;
+      available?: number;
+    } | null;
+  } | null;
   price?: {
     amount: string;
     currency: string;
@@ -131,13 +138,20 @@ export function CartProvider({
   }, [items, ready, token]);
 
   function addToCart(item: CartItem) {
+    const maxQuantity = item.limits?.per_user?.available;
+    if (item.can_be_bought === false || maxQuantity === 0) return;
+
     setItems((current) => {
       const existing = current.find((line) => line.item.sku === item.sku);
 
       if (existing) {
+        if (maxQuantity !== undefined && existing.quantity >= maxQuantity) {
+          return current;
+        }
+
         return current.map((line) =>
           line.item.sku === item.sku
-            ? { ...line, quantity: line.quantity + 1 }
+            ? { ...line, item, quantity: line.quantity + 1 }
             : line,
         );
       }
@@ -167,9 +181,19 @@ export function CartProvider({
     if (quantity < 1) return;
 
     setItems((current) =>
-      current.map((line) =>
-        line.item.sku === sku ? { ...line, quantity } : line,
-      ),
+      current.map((line) => {
+        if (line.item.sku !== sku) return line;
+
+        const maxQuantity = line.item.limits?.per_user?.available;
+        if (
+          line.item.can_be_bought === false ||
+          (maxQuantity !== undefined && quantity > maxQuantity)
+        ) {
+          return line;
+        }
+
+        return { ...line, quantity };
+      }),
     );
   }
 
@@ -342,6 +366,11 @@ export default function Cart() {
                             type="button"
                             onClick={() =>
                               changeQuantity(item.sku, quantity + 1)
+                            }
+                            disabled={
+                              item.can_be_bought === false ||
+                              (item.limits?.per_user?.available !== undefined &&
+                                quantity >= item.limits.per_user.available)
                             }
                             aria-label={`Increase ${item.name} quantity`}
                           >

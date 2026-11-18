@@ -24,6 +24,7 @@ function App() {
       <main className="app-main">
         <Catalog
           isLoggedIn={isLoggedIn}
+          token={token}
           country={country}
           onCountryChange={setCountry}
         />

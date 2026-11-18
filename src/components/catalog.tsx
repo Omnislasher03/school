@@ -9,6 +9,7 @@ type Group = {
 
 type CatalogProps = {
   isLoggedIn: boolean;
+  token: string | null;
   country: Country;
   onCountryChange: (country: Country) => void;
 };
@@ -28,10 +29,11 @@ function flattenGroups(groups: Group[]): Group[] {
 
 export default function Catalog({
   isLoggedIn,
+  token,
   country,
   onCountryChange,
 }: CatalogProps) {
-  const { addToCart, updateCartItems, ready } = useCart();
+  const { addToCart, updateCartItems, ready, items: cartItems } = useCart();
   const [groups, setGroups] = useState<Group[]>([]);
   const [selectedGroup, setSelectedGroup] = useState("");
   const [items, setItems] = useState<CartItem[]>([]);
@@ -92,6 +94,11 @@ export default function Catalog({
           groups.map(async (group) => {
             const response = await fetch(
               `${apiBase}/${projectId}/items/virtual_items/group/${encodeURIComponent(group.external_id)}?${query}`,
+              {
+                headers: token
+                  ? { Authorization: `Bearer ${token}` }
+                  : undefined,
+              },
             );
             if (!response.ok) {
               throw new Error(
@@ -126,7 +133,7 @@ export default function Catalog({
     return () => {
       active = false;
     };
-  }, [groups, locale, country, updateCartItems]);
+  }, [groups, locale, country, token, updateCartItems]);
 
   useEffect(() => {
     setItems(itemsByGroup[selectedGroup] ?? []);
@@ -219,7 +226,15 @@ export default function Catalog({
       )}
 
       <div className="catalog-grid">
-        {items.map((item) => (
+        {items.map((item) => {
+          const cartQuantity =
+            cartItems.find((line) => line.item.sku === item.sku)?.quantity ?? 0;
+          const available = item.limits?.per_user?.available;
+          const limitReached =
+            item.can_be_bought === false ||
+            (available !== undefined && cartQuantity >= available);
+
+          return (
           <article key={item.sku} className="catalog-item">
             <div className="catalog-item-image">
               {item.image_url ? (
@@ -250,14 +265,24 @@ export default function Catalog({
                   type="button"
                   className="add-cart-button"
                   onClick={() => addToCart(item)}
-                  disabled={!isLoggedIn || !ready}
+                  disabled={!isLoggedIn || !ready || limitReached}
                   aria-label={
-                    isLoggedIn
-                      ? `Add ${item.name} to cart`
-                      : "Log in to add items to cart"
+                    !isLoggedIn
+                      ? "Log in to add items to cart"
+                      : limitReached
+                        ? `${item.name} purchase limit reached`
+                        : ready
+                          ? `Add ${item.name} to cart`
+                          : "Cart is still loading"
                   }
                   title={
-                    isLoggedIn ? "Add to cart" : "Log in to add items to cart"
+                    !isLoggedIn
+                      ? "Log in to add items to cart"
+                      : limitReached
+                        ? "Purchase limit reached"
+                        : ready
+                          ? "Add to cart"
+                          : "Cart is still loading"
                   }
                 >
                   <svg
@@ -271,10 +296,18 @@ export default function Catalog({
                   </svg>
                 </button>
                 <span className="item-availability">In store</span>
+                {available !== undefined && (
+                  <span className="item-availability">
+                    {available > 0
+                      ? `${Math.max(0, available - cartQuantity)} remaining`
+                      : "Purchase limit reached"}
+                  </span>
+                )}
               </div>
             </div>
           </article>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
