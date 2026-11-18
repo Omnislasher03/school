@@ -31,7 +31,7 @@ export default function Catalog({
   country,
   onCountryChange,
 }: CatalogProps) {
-  const { addToCart, updateCartItems } = useCart();
+  const { addToCart, updateCartItems, ready } = useCart();
   const [groups, setGroups] = useState<Group[]>([]);
   const [selectedGroup, setSelectedGroup] = useState("");
   const [items, setItems] = useState<CartItem[]>([]);
@@ -250,7 +250,7 @@ export default function Catalog({
                   type="button"
                   className="add-cart-button"
                   onClick={() => addToCart(item)}
-                  disabled={!isLoggedIn}
+                  disabled={!isLoggedIn || !ready}
                   aria-label={
                     isLoggedIn
                       ? `Add ${item.name} to cart`

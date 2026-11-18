@@ -5,7 +5,9 @@ import {
   useCallback,
   useState,
   type ReactNode,
+  useRef,
 } from "react";
+import { getCart, putCart } from "../api/api";
 
 export type CartItem = {
   sku: string;
@@ -30,6 +32,9 @@ export type CartLine = {
 
 type CartContextValue = {
   items: CartLine[];
+  ready: boolean;
+  error: string | null;
+  retryLoadCart: () => void;
   addToCart: (item: CartItem) => void;
   updateCartItems: (catalogItems: CartItem[]) => void;
   removeFromCart: (sku: string) => void;
@@ -38,23 +43,92 @@ type CartContextValue = {
 
 const CartContext = createContext<CartContextValue | undefined>(undefined);
 
-export function CartProvider({ children }: { children: ReactNode }) {
-  const CART_STORAGE_KEY = "xsolla_cart";
+export function CartProvider({
+  children,
+  token,
+}: {
+  children: ReactNode;
+  token: string | null;
+}) {
+  const [items, setItems] = useState<CartLine[]>([]);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
-  const [items, setItems] = useState<CartLine[]>(() => {
-    const saved = localStorage.getItem(CART_STORAGE_KEY);
-    if (!saved) return [];
+  const catalogItemsBySku = useRef(new Map<string, CartItem>());
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
 
-    try {
-      return JSON.parse(saved) as CartLine[];
-    } catch {
-      return [];
-    }
-  });
+  const retryLoadCart = useCallback(() => {
+    setError(null);
+    setLoadAttempt((attempt) => attempt + 1);
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items));
-  }, [items]);
+    let active = true;
+
+    setReady(false);
+    setError(null);
+
+    if (!token) {
+      setItems([]);
+      setReady(true);
+      return () => {
+        active = false;
+      };
+    }
+
+    getCart(token)
+      .then((savedItems) => {
+        if (!active) return;
+
+        setItems(
+          savedItems.map(({ sku, quantity }) => ({
+            item: catalogItemsBySku.current.get(sku) ?? { sku, name: sku },
+            quantity,
+          })),
+        );
+        setReady(true);
+      })
+      .catch((cause: unknown) => {
+        if (!active) return;
+
+        setError(
+          cause instanceof Error ? cause.message : "Could not load cart",
+        );
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [token, loadAttempt]);
+
+  useEffect(() => {
+    if (!token || !ready) return;
+
+    const savedItems = items.map(({ item, quantity }) => ({
+      sku: item.sku,
+      quantity,
+    }));
+
+    let active = true;
+    saveQueue.current = saveQueue.current
+      .catch(() => undefined)
+      .then(() => putCart(token, savedItems))
+      .then(() => {
+        if (active) setError(null);
+      })
+      .catch((cause: unknown) => {
+        if (active) {
+          setError(
+            cause instanceof Error ? cause.message : "Could not save cart",
+          );
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [items, ready, token]);
 
   function addToCart(item: CartItem) {
     setItems((current) => {
@@ -73,15 +147,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }
 
   const updateCartItems = useCallback((catalogItems: CartItem[]) => {
-    const latestItemsBySku = new Map(
-      catalogItems.map((item) => [item.sku, item]),
-    );
+    for (const item of catalogItems) {
+      catalogItemsBySku.current.set(item.sku, item);
+    }
 
     setItems((current) =>
-      current.map((line) => {
-        const latestItem = latestItemsBySku.get(line.item.sku);
-        return latestItem ? { ...line, item: latestItem } : line;
-      }),
+      current.map((line) => ({
+        ...line,
+        item: catalogItemsBySku.current.get(line.item.sku) ?? line.item,
+      })),
     );
   }, []);
 
@@ -103,6 +177,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
     <CartContext.Provider
       value={{
         items,
+        ready,
+        error,
+        retryLoadCart,
         addToCart,
         updateCartItems,
         removeFromCart,
@@ -125,7 +202,14 @@ export function useCart() {
 }
 
 export default function Cart() {
-  const { items, removeFromCart, changeQuantity } = useCart();
+  const {
+    items,
+    ready,
+    error,
+    retryLoadCart,
+    removeFromCart,
+    changeQuantity,
+  } = useCart();
   const [isOpen, setIsOpen] = useState(false);
   const itemCount = items.reduce((total, line) => total + line.quantity, 0);
 
@@ -186,7 +270,22 @@ export default function Cart() {
               </button>
             </header>
 
-            {items.length === 0 ? (
+            {error && (
+              <p className="catalog-error" role="alert">
+                {error}
+              </p>
+            )}
+
+            {!ready ? (
+              <div className="cart-empty">
+                <p>{error ? "Could not load your cart." : "Loading cart…"}</p>
+                {error && (
+                  <button type="button" onClick={retryLoadCart}>
+                    Retry
+                  </button>
+                )}
+              </div>
+            ) : items.length === 0 ? (
               <div className="cart-empty">
                 <p>
                   Your cart is empty. Keep shopping to find something you like!

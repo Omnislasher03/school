@@ -4,7 +4,7 @@ import { Widget } from "@xsolla/login-sdk";
 const token_key = "xsolla_token";
 
 type LoginProps = {
-  onAuthChange: (loggedIn: boolean) => void;
+  onAuthChange: (token: string | null) => void;
 };
 
 export default function Login({ onAuthChange }: LoginProps) {
@@ -13,7 +13,7 @@ export default function Login({ onAuthChange }: LoginProps) {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    onAuthChange(Boolean(token));
+    onAuthChange(token);
     const params = new URLSearchParams(window.location.search);
     const returnedToken = params.get("token");
 
