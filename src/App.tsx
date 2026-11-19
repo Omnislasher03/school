@@ -13,23 +13,23 @@ function App() {
 
   return (
     <CartProvider key={token ?? "logged-out"} token={token}>
-    <div className="app">
-      <header className="app-header">
-        <h1 className="app-title">Xsolla Login Demo</h1>
-        <div className="header-actions">
-          {isLoggedIn && <Cart />}
-          <Login onAuthChange={setToken} />
-        </div>
-      </header>
-      <main className="app-main">
-        <Catalog
-          isLoggedIn={isLoggedIn}
-          token={token}
-          country={country}
-          onCountryChange={setCountry}
-        />
-      </main>
-    </div>
+      <div className="app">
+        <header className="app-header">
+          <h1 className="app-title">Xsolla Login Demo</h1>
+          <div className="header-actions">
+            {token && <Cart token={token} country={country} />}
+            <Login onAuthChange={setToken} />
+          </div>
+        </header>
+        <main className="app-main">
+          <Catalog
+            isLoggedIn={isLoggedIn}
+            token={token}
+            country={country}
+            onCountryChange={setCountry}
+          />
+        </main>
+      </div>
     </CartProvider>
   );
 }

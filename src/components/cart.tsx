@@ -7,7 +7,13 @@ import {
   type ReactNode,
   useRef,
 } from "react";
-import { getCart, putCart } from "../api/api";
+import {
+  getCart,
+  putCart,
+  createCheckoutToken,
+  syncXsollaInventory,
+  type InventoryItem,
+} from "../api/api";
 
 export type CartItem = {
   sku: string;
@@ -42,6 +48,7 @@ type CartContextValue = {
   ready: boolean;
   error: string | null;
   retryLoadCart: () => void;
+  refreshCart: () => Promise<boolean>;
   addToCart: (item: CartItem) => void;
   updateCartItems: (catalogItems: CartItem[]) => void;
   removeFromCart: (sku: string) => void;
@@ -64,11 +71,27 @@ export function CartProvider({
 
   const catalogItemsBySku = useRef(new Map<string, CartItem>());
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const skipNextSave = useRef(false);
 
   const retryLoadCart = useCallback(() => {
     setError(null);
     setLoadAttempt((attempt) => attempt + 1);
   }, []);
+
+  const refreshCart = useCallback(async () => {
+    if (!token) return false;
+
+    const savedItems = await getCart(token);
+    skipNextSave.current = true;
+    setItems(
+      savedItems.map(({ sku, quantity }) => ({
+        item: catalogItemsBySku.current.get(sku) ?? { sku, name: sku },
+        quantity,
+      })),
+    );
+    setError(null);
+    return savedItems.length === 0;
+  }, [token]);
 
   useEffect(() => {
     let active = true;
@@ -88,6 +111,7 @@ export function CartProvider({
       .then((savedItems) => {
         if (!active) return;
 
+        skipNextSave.current = true;
         setItems(
           savedItems.map(({ sku, quantity }) => ({
             item: catalogItemsBySku.current.get(sku) ?? { sku, name: sku },
@@ -111,6 +135,10 @@ export function CartProvider({
 
   useEffect(() => {
     if (!token || !ready) return;
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
+      return;
+    }
 
     const savedItems = items.map(({ item, quantity }) => ({
       sku: item.sku,
@@ -204,6 +232,7 @@ export function CartProvider({
         ready,
         error,
         retryLoadCart,
+        refreshCart,
         addToCart,
         updateCartItems,
         removeFromCart,
@@ -225,17 +254,123 @@ export function useCart() {
   return context;
 }
 
-export default function Cart() {
+type CartProps = {
+  token: string;
+  country: "MY" | "US";
+};
+
+export default function Cart({ token, country }: CartProps) {
   const {
     items,
     ready,
     error,
     retryLoadCart,
+    refreshCart,
     removeFromCart,
     changeQuantity,
   } = useCart();
   const [isOpen, setIsOpen] = useState(false);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [inventory, setInventory] = useState<InventoryItem[] | null>(null);
+  const [isSyncingInventory, setIsSyncingInventory] = useState(false);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
   const itemCount = items.reduce((total, line) => total + line.quantity, 0);
+
+  const handleSyncInventory = useCallback(async () => {
+    if (isSyncingInventory) return;
+
+    setIsSyncingInventory(true);
+    setInventoryError(null);
+    try {
+      setInventory(await syncXsollaInventory(token));
+    } catch (cause) {
+      setInventoryError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not sync Xsolla inventory. Please try again.",
+      );
+    } finally {
+      setIsSyncingInventory(false);
+    }
+  }, [isSyncingInventory, token]);
+
+  useEffect(() => {
+    if (!isOpen || inventory !== null) return;
+    void handleSyncInventory();
+  }, [handleSyncInventory, inventory, isOpen]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("status") !== "done") return;
+
+    const cleanupTimer = window.setTimeout(() => {
+      for (const key of ["status", "user_id", "invoice_id", "foreignInvoice"]) {
+        params.delete(key);
+      }
+      const cleanURL =
+        window.location.pathname +
+        (params.size > 0 ? `?${params.toString()}` : "") +
+        window.location.hash;
+      window.history.replaceState({}, "", cleanURL);
+    }, 0);
+    setIsOpen(true);
+    setCheckoutError(null);
+
+    let active = true;
+    async function refreshAfterPayment() {
+      for (let attempt = 0; attempt < 20 && active; attempt++) {
+        try {
+          if (await refreshCart()) return;
+        } catch (cause) {
+          if (!active) return;
+          setCheckoutError(
+            cause instanceof Error
+              ? `Could not refresh cart: ${cause.message}`
+              : "Could not refresh cart. Please try again.",
+          );
+          return;
+        }
+
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+      }
+
+      if (active) {
+        setCheckoutError(
+          "The cart has not been cleared yet. Confirm that Xsolla can deliver order_paid to your backend, then refresh the app.",
+        );
+      }
+    }
+
+    void refreshAfterPayment();
+    return () => {
+      active = false;
+      window.clearTimeout(cleanupTimer);
+    };
+  }, [refreshCart]);
+
+  async function handleCheckout() {
+    if (!ready || items.length === 0 || isCheckingOut) return;
+
+    setIsCheckingOut(true);
+    setCheckoutError(null);
+
+    try {
+      const paymentToken = await createCheckoutToken(token, country);
+      const payStationUrl = new URL(
+        "https://sandbox-secure.xsolla.com/paystation4/",
+      );
+      payStationUrl.searchParams.set("token", paymentToken);
+      window.location.assign(payStationUrl.toString());
+    } catch (cause) {
+      setCheckoutError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not start checkout. Please try again.",
+      );
+      setIsCheckingOut(false);
+    }
+  }
 
   useEffect(() => {
     if (!isOpen) return;
@@ -399,12 +534,45 @@ export default function Cart() {
                     Continue shopping
                   </button>
 
-                  <button type="button" className="cart-checkout" disabled>
-                    Checkout — next step
+                  <button
+                    type="button"
+                    className="cart-checkout"
+                    onClick={handleCheckout}
+                    disabled={!ready || items.length === 0 || isCheckingOut}
+                  >
+                    {isCheckingOut ? "Opening payment…" : "Checkout"}
                   </button>
                 </footer>
+                {checkoutError && (
+                  <p className="catalog-error" role="alert">
+                    {checkoutError}
+                  </p>
+                )}
               </>
             )}
+
+            <section className="cart-empty" aria-labelledby="inventory-title">
+              <h3 id="inventory-title">Your Xsolla inventory</h3>
+              {isSyncingInventory && <p>Loading inventory…</p>}
+              {inventoryError && (
+                <p className="catalog-error" role="alert">
+                  {inventoryError}
+                </p>
+              )}
+              {inventory && (
+                inventory.length > 0 ? (
+                  <ul>
+                    {inventory.map((item) => (
+                      <li key={item.sku}>
+                        {item.sku} — {item.quantity}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>No items are currently listed in Xsolla inventory.</p>
+                )
+              )}
+            </section>
           </section>
         </div>
       )}

@@ -5,6 +5,11 @@ export type SavedCartItem = {
   quantity: number;
 };
 
+export type InventoryItem = {
+  sku: string;
+  quantity: number;
+};
+
 type CartResponse = {
   items: SavedCartItem[];
 };
@@ -35,4 +40,35 @@ export async function putCart(
       },
     },
   );
+}
+
+export async function createCheckoutToken(
+  token: string,
+  country: string,
+): Promise<string> {
+  const response = await api.post<{ token: string }>(
+    "/user/checkout/token",
+    { country },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+  return response.data.token;
+}
+
+export async function syncXsollaInventory(
+  token: string,
+): Promise<InventoryItem[]> {
+  const response = await api.post<{ items: InventoryItem[] }>(
+    "/user/inventory/sync",
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+  return response.data.items;
 }
